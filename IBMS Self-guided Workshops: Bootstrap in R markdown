@@ -1,0 +1,164 @@
+```{r}
+library(gridExtra)
+library(ggplot2)
+library(ggridges)
+library(purrr)
+library(boot)
+suppressMessages(library(tidyverse))
+library(tidyverse)
+```
+
+# Monte Carlo
+
+If a circle of radius R is inscribed inside a square with side length 2R, then the area of the circle will be pi*R^2 and the area of the square will be
+(2R)^2. So the ratio of the area of the circle to the area of the square will be **pi/4**.
+
+This means that, if you pick **N points** at random inside the square, approximately N*pi/4 of those points should fall inside the circle. We use the
+following code to calculate Pi.
+
+This program picks points at random inside the square. It then checks to see if the point is inside the circle (it knows it's inside the circle if x^2 +
+y^2 < R^2, where x and y are the coordinates of the point and R is the radius of the circle). The program keeps track of how many points it's
+picked so far (N) and how many of those points fell inside the circle (M).
+
+Pi is then approximated as 4M/N.
+
+```{r}
+set.seed(12139)
+N = 10000
+x = 2*runif(N) - 1 #The Uniform Distribution
+y = 2*runif(N) - 1 #If min or max are not specified, default: 0 and 1. So, 2*[0, 1]-1=[-1,1] 
+M = sum(x^2+y^2<=1.0)
+4*M/N
+```
+Now show this in a graph, we need to define a function to draw a circle
+```{r}
+gg_circle <- function(r, xc, yc, color="black", fill=NA, ...){
+  x <- xc + r*cos(seq(0,pi,length.out=100))
+  ymax <- yc + r*sin(seq(0,pi,length.out=100))
+  ymin <- yc + r*sin(seq(0,-pi,length.out=100))
+  annotate("ribbon",x=x,ymin=ymin,ymax=ymax,color=color,fill=fill, ...)
+}
+```
+The shaded area is Pi
+```{r}
+square <- ggplot(NULL,aes(xmin=-1,xmax=1,ymin=-1,ymax=1)) +
+  geom_rect(color="red", fill=NA)
+square + gg_circle(r=1, xc=0, yc=0, color="blue", fill="red",alpha=0.2) + 
+  coord_fixed(ratio=1) + theme_minimal() + xlab("")
+```
+
+# Bootstrap
+
+In order to apply the boot function in the library to the mean, standard deviation and the median, we first need to define a median.boot function
+```{r}
+summary.boot = function(dta,i){ #data itself and the index
+  tmp = c(mean(dta[i]), sd(dta[i]),median(dta[i]))
+  return(tmp)
+}
+```
+Generate random numbers from a normal distribution
+```{r}
+set.seed(12138)
+n = 500
+mu = 5000
+dta = rnorm(n, mean = mu, sd = 10)
+dta10 = rnorm(10*n, mean = mu, sd= 10)
+dta100 = rnorm(100*n, mean = mu, sd = 10)
+```
+Look at the normal distributions
+```{r}
+curve(dnorm(x, mean=mu, sd=sqrt(100)),from=4950,to=5050,ylab="",xlab="",col="blue",lwd=2)
+```
+```{r}
+hist(dta,breaks = 20,xlab="",ylab="",main = "n=500",col="darkgreen", border = "NA")
+hist(dta10,breaks = 80,xlab="",ylab="",main = "n=5000",col="darkgreen", border = "NA")
+hist(dta100,breaks = 320,xlab="",ylab="",main = "n=50000",col="darkgreen", border = "NA")
+```
+```{r}
+boot(data=dta, statistic = summary.boot, R=1999, stype = "i") #R: The number of bootstrap replicates
+```
+Suppose we want to estimate the standard deviation of the sample mean. The theoretical standard deviation of the sample mean is
+```{r}
+sqrt(100/n)
+```
+If the true variance is unknown, we can use the following to estimate the standard deviation of the sample mean.
+```{r}
+sd(dta)/sqrt(n)
+```
+The theoretical standard deviation of the sample **median** in this case is
+```{r}
+sqrt(0.5*(1-0.5)/n)/dnorm(5000,mean=5000,sd=sqrt(100))
+```
+
+# Practice: Iris Data
+```{r}
+head(iris)
+```
+
+Suppose we want to find CIs for median Sepal.Length, median Petal.Width and Spearman's rank correlation coefficient between these two. We will use R's boot package and a function called boot. We have to create a function that calculates our statistics out of the resampled data. It should have at least two arguments: a dataset and a vector containing indices of elements from a dataset that were picked to create a bootstrap sample.
+
+If we wish to calculate CIs for more than one statistics at once, our function has to return them as a single vector
+```{r}
+iris.data.boot <- function(data,indices){
+  dt <- data[indices,]
+  c( #Return then as a single vector
+    cor(dt[,1],dt[,2],method = "s"),
+    median(dt[,1]),
+    median(dt[,2])
+  )
+}
+```
+
+iris.data.boot chooses desired elements (which numbers are stored in indiced) from data and computes correlation coefficient of first two columns (`method="s"` is used to choose Spearman's rank coefficient, `method="p"` will result in Pearson's coefficient) and their medians.
+
+We can also add some extra arguments, eg.allow users to choose the type and correlation coefficient.
+```{r}
+iris.data.boot <- function(data,indices,cor.type){
+  dt <- data[indices,]
+  c( #Return then as a single vector
+    cor(dt[,1],dt[,2],method = cor.type),
+    median(dt[,1]),
+    median(dt[,2])
+  )
+}
+```
+
+Now, we can use the boot function. We have to supply it with a name of dataset, function, number of repetitions (R) and any additional arguments of our function (like `cor.type`). Below, we use set.seed to ensure the reproducibility.
+```{r}
+set.seed(12138)
+mybootstrap <- boot(iris, iris.data.boot, R=1000, cor.type="s")
+head(mybootstrap$t)  #contains values generated by the bootstrap procedure, suppose to be 1000 rows
+head(mybootstrap$t0) #contains values generated in original, full data
+```
+```{r}
+mybootstrap
+```
+original is the same as `$t0`. bias is a difference between the **mean of bootstrap realizations** (those from `$t`), called a **bootstrap estimation** of T and value in original dataset (the one from `$t0`)
+```{r}
+colMeans(mybootstrap$t)-mybootstrap$t0 #Calculate the bias
+apply(mybootstrap$t, 2, sd) #std.err is a standard error of bootstrap estimate, which equals standard deviation of bootstrap realizations.
+```
+
+# Different types of bootstrap CIs
+
+Before we start with CIs, take a look at the distributions of bootstrap realizations. Here `index=1` is a Spearman's correlation coefficient between Sepal.length and Sepal.width, `index=2` is a median of Sepal.length, and `index=3` is a median of Sepal.width.
+```{r}
+plot(mybootstrap, index = 1)
+```
+   
+Distribution of bootstrap correlation coefficient seems quite Normal-like. To find CI, we can use `boot.ci`. It defaults to 95%, but it can be changed with the `conf` parameter.
+```{r}
+boot.ci(mybootstrap, index = 1)
+```
+`boot.ci` provides 5 types of bootstrap CIs. One of them, studentized interval, is unique. It needs an estimate of bootstrap variance. We didn' t provide it, so we didn' t know. If we don't want to see them all, we can pick relevant ones in type argument. Possible values are norm, basic, stud, perc, bca or vector of these.
+```{r}
+boot.ci(mybootstrap, index = 1, type = c("basic","perc"))
+```
+The `boot.ci` function creats objects of class boot.ci. `$norm` is a 3-element vector that contains confidence interval and boundaries.
+```{r}
+boot.ci(mybootstrap, index = 1, type = "norm")$norm
+```
+`$basic` and et al., are 5-element vectors also contain percentiles. #?
+```{r}
+boot.ci(mybootstrap, index=1, type=c("basic"))$basic
+```
